@@ -2,12 +2,14 @@
 
 
 const User = require('../models/user');
+const Follow = require('../models/follow');
 const bcrypt = require('bcrypt-nodejs');
 const jwt = require('../services/jwt');
 const message = require('../models/message');
 const mongoosePaginate = require('mongoose-pagination')
 const fs = require('fs')
-const path = require('path')
+const path = require('path');
+const follow = require('../models/follow');
 
 function home(req, res) {
     res.status(200).send({
@@ -106,7 +108,11 @@ function getUser(req, res){
 
     User.findById(userId).exec().then(user =>{
         if(!user) return res.status(404).send({message:'El usuario no existe'})
-            return res.status(200).send({user})
+            user.password = undefined
+            followThisUser(req.user.sub, userId).then(value =>{
+                return res.status(200).send({user, following: value.following, followed: value.followed})
+            })
+            
     }).catch(err =>{
         return res.status(500).send({message:'Error en la peticion'})
     });
@@ -125,13 +131,48 @@ function getUsers(req,res){
         .then(result =>{
             console.log(result)
             if(!result.length) return res.status(404).send({message:'No hay usuarios disponibles'})
-                return res.status(200).send({
-                    users: result,
-                    total: result.length,
-                    pages: Math.ceil(result.length/itemsPerPage)
-                })
+                followUserID(identity_user_id).then(value => {
+
+                    
+                    return res.status(200).send({
+                        users: result,
+                        users_following: value.following,
+                        users_follow_me: value.followed,
+                        total: result.length,
+                        pages: Math.ceil(result.length/itemsPerPage)
+                    })
+            })
         }).catch(err => res.status(500).send({message:'Error en la peticion'}))
 
+}
+
+async function followUserID(user_id){
+    var following = await Follow.find({"user":user_id}).select({'_id':0,'__v':0, 'user':0}).exec()
+        .then(follows => {
+            var follows_clean = []
+            follows.forEach((follow) => {
+                follows_clean.push(follow.followed)
+            })
+            return follows_clean
+        }).catch(err => {
+
+        })
+        var followed = await Follow.find({"followed":user_id}).select({'_id':0,'__v':0, 'followed':0}).exec()
+        .then(follows => {
+            var follows_clean = []
+            follows.forEach((follow) => {
+                follows_clean.push(follow.user)
+            })
+            return follows_clean
+        }).catch(err => {
+
+        })
+        
+        return {
+            following: following,
+            followed: followed
+        }
+        
 }
 
 function updateUser(req, res){
@@ -208,6 +249,53 @@ function getImageFile(req, res){
     })
 }
 
+async function followThisUser(identity_user_id, user_id){
+    let following = await Follow.findOne({"user":identity_user_id, "followed": user_id}).exec()
+                .then(follow => {
+                    return follow
+                }).catch(err => {
+                    return handleError(err)
+                })
+    let followed = await Follow.findOne({"user":user_id, "followed": identity_user_id}).exec()
+                 .then(follow => {
+                      return follow
+                }).catch(err => {
+                    return handleError(err)
+                })
+    return {
+        following: following,
+        followed: followed
+    }
+}
+
+function getCounters(req, res){
+    var userId = req.user.sub
+    if(req.params.id){
+        userId = req.params.id
+    } 
+    
+    getCountFollow(userId).then((value) => {
+            return res.status(200).send(value)
+        })
+    
+}
+
+async function getCountFollow(user_id){
+    var following = await Follow.countDocuments({"user": user_id})
+        .then(count => {
+            return count
+        }).catch(err => {return handleError(err)})
+
+        var followed = await Follow.countDocuments({"followed": user_id})
+        .then(count => {
+            return count
+        }).catch(err => {return handleError(err)})
+
+        return {
+            following: following,
+            followed: followed
+        }
+}
 
 
 module.exports = {
@@ -220,4 +308,5 @@ module.exports = {
     updateUser,
     uploadImage,
     getImageFile,
+    getCounters
 }
